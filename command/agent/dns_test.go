@@ -1809,7 +1809,7 @@ func TestDNS_ServiceLookup_Randomize(t *testing.T) {
 	testutil.WaitForLeader(t, srv.agent.RPC, "dc1")
 
 	// Register a large set of nodes.
-	for i := 0; i < 3*maxServiceResponses; i++ {
+	for i := 0; i < 9; i++ {
 		args := &structs.RegisterRequest{
 			Datacenter: "dc1",
 			Node:       fmt.Sprintf("foo%d", i),
@@ -1862,12 +1862,6 @@ func TestDNS_ServiceLookup_Randomize(t *testing.T) {
 				t.Fatalf("err: %v", err)
 			}
 
-			// Response length should be truncated and we should get
-			// an A record for each response.
-			if len(in.Answer) != maxServiceResponses {
-				t.Fatalf("Bad: %#v", len(in.Answer))
-			}
-
 			// Collect all the names.
 			var names []string
 			for _, rec := range in.Answer {
@@ -1902,8 +1896,8 @@ func TestDNS_ServiceLookup_Truncate(t *testing.T) {
 
 	testutil.WaitForLeader(t, srv.agent.RPC, "dc1")
 
-	// Register nodes a large number of nodes.
-	for i := 0; i < 3*maxServiceResponses; i++ {
+	// Register a large number of nodes.
+	for i := 0; i < 50; i++ {
 		args := &structs.RegisterRequest{
 			Datacenter: "dc1",
 			Node:       fmt.Sprintf("foo%d", i),
@@ -1962,9 +1956,7 @@ func TestDNS_ServiceLookup_Truncate(t *testing.T) {
 }
 
 func TestDNS_ServiceLookup_LargeResponses(t *testing.T) {
-	dir, srv := makeDNSServerConfig(t, nil, func(c *DNSConfig) {
-		c.EnableTruncate = true
-	})
+	dir, srv := makeDNSServer(t)
 	defer os.RemoveAll(dir)
 	defer srv.agent.Shutdown()
 
@@ -1972,135 +1964,63 @@ func TestDNS_ServiceLookup_LargeResponses(t *testing.T) {
 
 	longServiceName := "this-is-a-very-very-very-very-very-long-name-for-a-service"
 
-	// Register 3 nodes
-	for i := 0; i < 3; i++ {
-		args := &structs.RegisterRequest{
-			Datacenter: "dc1",
-			Node:       fmt.Sprintf("foo%d", i),
-			Address:    fmt.Sprintf("127.0.0.%d", i+1),
-			Service: &structs.NodeService{
-				Service: longServiceName,
-				Tags:    []string{"master"},
-				Port:    12345,
-			},
-		}
-
-		var out struct{}
-		if err := srv.agent.RPC("Catalog.Register", args, &out); err != nil {
-			t.Fatalf("err: %v", err)
-		}
+	tests := []struct {
+		inRecs   int
+		wantRecs int
+	}{
+		{1, 1},
+		{2, 2},
+		{3, 3},
+		{4, 4},
+		{5, 5},
+		{6, 6},
+		{7, 6},
+		{8, 5},
+		{9, 5},
+		{10, 4},
 	}
 
-	m := new(dns.Msg)
-	m.SetQuestion("_"+longServiceName+"._master.service.consul.", dns.TypeSRV)
-
-	c := new(dns.Client)
-	addr, _ := srv.agent.config.ClientListener("", srv.agent.config.Ports.DNS)
-	in, _, err := c.Exchange(m, addr.String())
-	if err != nil && err != dns.ErrTruncated {
-		t.Fatalf("err: %v", err)
-	}
-
-	// Make sure the response size is RFC 1035-compliant for UDP messages
-	if in.Len() > 512 {
-		t.Fatalf("Bad: %#v", in.Len())
-	}
-
-	// We should only have two answers now
-	if len(in.Answer) != 2 {
-		t.Fatalf("Bad: %#v", len(in.Answer))
-	}
-
-	// Check for the truncate bit
-	if !in.Truncated {
-		t.Fatalf("should have truncate bit")
-	}
-}
-
-func TestDNS_ServiceLookup_MaxResponses(t *testing.T) {
-	dir, srv := makeDNSServer(t)
-	defer os.RemoveAll(dir)
-	defer srv.agent.Shutdown()
-
-	testutil.WaitForLeader(t, srv.agent.RPC, "dc1")
-
-	// Register a large number of nodes.
-	for i := 0; i < 6*maxServiceResponses; i++ {
-		nodeAddress := fmt.Sprintf("127.0.0.%d", i+1)
-		if i > 3 {
-			nodeAddress = fmt.Sprintf("fe80::%d", i+1)
-		}
-		args := &structs.RegisterRequest{
-			Datacenter: "dc1",
-			Node:       fmt.Sprintf("foo%d", i),
-			Address:    nodeAddress,
-			Service: &structs.NodeService{
-				Service: "web",
-				Port:    8000,
-			},
-		}
-
-		var out struct{}
-		if err := srv.agent.RPC("Catalog.Register", args, &out); err != nil {
-			t.Fatalf("err: %v", err)
-		}
-	}
-
-	// Register an equivalent prepared query.
-	var id string
-	{
-		args := &structs.PreparedQueryRequest{
-			Datacenter: "dc1",
-			Op:         structs.PreparedQueryCreate,
-			Query: &structs.PreparedQuery{
-				Service: structs.ServiceQuery{
-					Service: "web",
+	for _, test := range tests {
+		// Register nodes
+		for i := 0; i < test.inRecs; i++ {
+			args := &structs.RegisterRequest{
+				Datacenter: "dc1",
+				Node:       fmt.Sprintf("foo%d", i),
+				Address:    fmt.Sprintf("127.0.0.%d", i+1),
+				Service: &structs.NodeService{
+					Service: longServiceName,
+					Tags:    []string{"master"},
+					Port:    12345,
 				},
-			},
-		}
-		if err := srv.agent.RPC("PreparedQuery.Apply", args, &id); err != nil {
-			t.Fatalf("err: %v", err)
-		}
-	}
+			}
 
-	// Look up the service directly and via prepared query.
-	questions := []string{
-		"web.service.consul.",
-		id + ".query.consul.",
-	}
-	for _, question := range questions {
+			var out struct{}
+			if err := srv.agent.RPC("Catalog.Register", args, &out); err != nil {
+				t.Fatalf("err: %v", err)
+			}
+		}
+
 		m := new(dns.Msg)
-		m.SetQuestion(question, dns.TypeANY)
+		m.SetQuestion("_"+longServiceName+"._master.service.consul.", dns.TypeSRV)
 
-		addr, _ := srv.agent.config.ClientListener("", srv.agent.config.Ports.DNS)
 		c := new(dns.Client)
+		addr, _ := srv.agent.config.ClientListener("", srv.agent.config.Ports.DNS)
 		in, _, err := c.Exchange(m, addr.String())
-		if err != nil {
+		if err != nil && err != dns.ErrTruncated {
 			t.Fatalf("err: %v", err)
 		}
 
-		if len(in.Answer) != 3 {
-			t.Fatalf("should receive 3 answers for ANY")
+		// Make sure the response size is RFC 1035-compliant for UDP messages
+		if gotBytes := in.Len(); gotBytes > maxResponseBytes {
+			// Did it get compressed?
+			in.Compress = true
+			if in.Len() > maxResponseBytes {
+				t.Fatalf("Bad: %#v", in.Len())
+			}
 		}
 
-		m.SetQuestion(question, dns.TypeA)
-		in, _, err = c.Exchange(m, addr.String())
-		if err != nil {
-			t.Fatalf("err: %v", err)
-		}
-
-		if len(in.Answer) != 3 {
-			t.Fatalf("should receive 3 answers for A")
-		}
-
-		m.SetQuestion(question, dns.TypeAAAA)
-		in, _, err = c.Exchange(m, addr.String())
-		if err != nil {
-			t.Fatalf("err: %v", err)
-		}
-
-		if len(in.Answer) != 3 {
-			t.Fatalf("should receive 3 answers for AAAA")
+		if len(in.Answer) != test.wantRecs {
+			t.Fatalf("Bad: %#v", len(in.Answer))
 		}
 	}
 }

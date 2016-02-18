@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	maxServiceResponses = 3 // For UDP only
-	maxRecurseRecords   = 5
+	maxResponseBytes  = 512 // For UDP only
+	maxRecurseRecords = 5
 )
 
 // DNSServer is used to wrap an Agent and expose various
@@ -491,17 +491,18 @@ func (d *DNSServer) formatNodeRecord(node *structs.Node, addr, qName string, qTy
 func trimAnswers(resp *dns.Msg) (trimmed bool) {
 	numAnswers := len(resp.Answer)
 
-	if numAnswers > maxServiceResponses {
-		resp.Answer = resp.Answer[:maxServiceResponses]
-	}
-
 	// Check that the response isn't more than 512 bytes
-	for respBytes := resp.Len(); respBytes > 512; respBytes = resp.Len() {
-		resp.Answer = resp.Answer[:len(resp.Answer)-1]
+	if resp.Len() > maxResponseBytes {
+		// Enable compression; that may be enough
+		resp.Compress = true
 
-		if len(resp.Answer) == 0 {
-			// We've done all we can
-			break
+		for respBytes := resp.Len(); respBytes > maxResponseBytes; respBytes = resp.Len() {
+			resp.Answer = resp.Answer[:len(resp.Answer)-1]
+
+			if len(resp.Answer) == 0 {
+				// We've done all we can
+				break
+			}
 		}
 	}
 
