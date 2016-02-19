@@ -77,6 +77,15 @@ type DNSConfig struct {
 	// returned by default for UDP.
 	EnableTruncate bool `mapstructure:"enable_truncate"`
 
+	// EnableCompress is used to enable compression of UDP
+	// DNS queries when the resulting response would
+	// otherwise be too large to fit into the allowed 512
+	// bytes. This allows for more records to be returned
+	// without needing to cut any off. If the response would
+	// still be too large, records will still be cut off
+	// and the truncate flag set if EnableTruncate is true.
+	EnableCompress bool `mapstructure:"enable_compress"`
+
 	// MaxStale is used to bound how stale of a result is
 	// accepted for a DNS lookup. This can be used with
 	// AllowStale to limit how old of a value is served up.

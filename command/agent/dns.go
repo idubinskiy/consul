@@ -488,13 +488,15 @@ func (d *DNSServer) formatNodeRecord(node *structs.Node, addr, qName string, qTy
 }
 
 // trimAnswers makes sure a UDP response is not longer than allowed by RFC 1035
-func trimAnswers(resp *dns.Msg) (trimmed bool) {
+func (d *DNSServer) trimAnswers(resp *dns.Msg) (trimmed bool) {
 	numAnswers := len(resp.Answer)
 
 	// Check that the response isn't more than 512 bytes
 	if resp.Len() > maxResponseBytes {
-		// Enable compression; that may be enough
-		resp.Compress = true
+		// Enable compression if allowed by config
+		if d.config.EnableCompress {
+			resp.Compress = true
+		}
 
 		for respBytes := resp.Len(); respBytes > maxResponseBytes; respBytes = resp.Len() {
 			resp.Answer = resp.Answer[:len(resp.Answer)-1]
@@ -570,7 +572,7 @@ RPC:
 
 	// If the network is not TCP, restrict the number of responses
 	if network != "tcp" {
-		wasTrimmed := trimAnswers(resp)
+		wasTrimmed := d.trimAnswers(resp)
 
 		// Flag that there are more records to return in the UDP response
 		if wasTrimmed && d.config.EnableTruncate {
@@ -665,7 +667,7 @@ RPC:
 
 	// If the network is not TCP, restrict the number of responses.
 	if network != "tcp" {
-		wasTrimmed := trimAnswers(resp)
+		wasTrimmed := d.trimAnswers(resp)
 
 		// Flag that there are more records to return in the UDP response
 		if wasTrimmed && d.config.EnableTruncate {

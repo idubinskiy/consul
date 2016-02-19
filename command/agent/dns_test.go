@@ -1964,12 +1964,61 @@ func TestDNS_ServiceLookup_LargeResponses(t *testing.T) {
 
 	longServiceName := "this-is-a-very-very-very-very-very-long-name-for-a-service"
 
+	// Register 3 nodes
+	for i := 0; i < 3; i++ {
+		args := &structs.RegisterRequest{
+			Datacenter: "dc1",
+			Node:       fmt.Sprintf("foo%d", i),
+			Address:    fmt.Sprintf("127.0.0.%d", i+1),
+			Service: &structs.NodeService{
+				Service: longServiceName,
+				Tags:    []string{"master"},
+				Port:    12345,
+			},
+		}
+
+		var out struct{}
+		if err := srv.agent.RPC("Catalog.Register", args, &out); err != nil {
+			t.Fatalf("err: %v", err)
+		}
+	}
+
+	m := new(dns.Msg)
+	m.SetQuestion("_"+longServiceName+"._master.service.consul.", dns.TypeSRV)
+
+	c := new(dns.Client)
+	addr, _ := srv.agent.config.ClientListener("", srv.agent.config.Ports.DNS)
+	in, _, err := c.Exchange(m, addr.String())
+	if err != nil && err != dns.ErrTruncated {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Make sure the response size is RFC 1035-compliant for UDP messages
+	if gotBytes := in.Len(); gotBytes > maxResponseBytes {
+		t.Fatalf("Bad: %#v", in.Len())
+	}
+
+	// We should only have two answers now
+	if len(in.Answer) != 2 {
+		t.Fatalf("Bad: %#v", len(in.Answer))
+	}
+}
+
+func TestDNS_ServiceLookup_Compress(t *testing.T) {
+	dir, srv := makeDNSServerConfig(t, nil, func(c *DNSConfig) {
+		c.EnableCompress = true
+	})
+	defer os.RemoveAll(dir)
+	defer srv.agent.Shutdown()
+
+	testutil.WaitForLeader(t, srv.agent.RPC, "dc1")
+
+	longServiceName := "this-is-a-very-very-very-very-very-long-name-for-a-service"
+
 	tests := []struct {
 		inRecs   int
 		wantRecs int
 	}{
-		{1, 1},
-		{2, 2},
 		{3, 3},
 		{4, 4},
 		{5, 5},
@@ -2010,13 +2059,10 @@ func TestDNS_ServiceLookup_LargeResponses(t *testing.T) {
 			t.Fatalf("err: %v", err)
 		}
 
-		// Make sure the response size is RFC 1035-compliant for UDP messages
+		// Make sure the compressed response size is RFC 1035-compliant for UDP messages
+		in.Compress = true
 		if gotBytes := in.Len(); gotBytes > maxResponseBytes {
-			// Did it get compressed?
-			in.Compress = true
-			if in.Len() > maxResponseBytes {
-				t.Fatalf("Bad: %#v", in.Len())
-			}
+			t.Fatalf("Bad: %#v", in.Len())
 		}
 
 		if len(in.Answer) != test.wantRecs {

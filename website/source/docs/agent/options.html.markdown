@@ -464,6 +464,12 @@ definitions support being updated during a reload.
   will set the truncated flag, indicating to clients that they should re-query using TCP to
   get the full set of records.
 
+  * <a name="enable_compress"></a><a href="#enable_compress">`enable_compress`</a> If set to
+  true, a UDP DNS query that would result in a larger-than-valid response will compress the
+  response. If the compressed response still would not fit, the number of records in the
+  response will be reduced to fit, and the truncated flag will be set if
+  [`enable_truncate`](#enable_truncate) is set to true.
+
   * <a name="only_passing"></a><a href="#only_passing">`only_passing`</a> If set to true, any
   nodes whose healthchecks are not passing will be excluded from DNS results. By default (or
   if set to false), only nodes whose healthchecks are failing as critical will be excluded.
